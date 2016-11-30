@@ -1,0 +1,89 @@
+---
+title: "Œledzie"
+author: "Jan Wielebiñski"
+date: "26 XI 2016"
+output: 
+  html_document:
+    toc: true
+---
+
+```{r initial setup, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, results='hide', error = FALSE, warning = FALSE, message = FALSE)
+```
+
+## Podsumowanie
+Usuniêto rekordy z brakami poniewa¿ próbka jest wystarczaj¹co du¿a. Dodatkowo zweryfikowano czy ma to wp³yw.
+
+## Wykorzystane biblioteki
+```{r loading libraries, echo = TRUE}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(corrplot)
+library(caret)
+```
+
+```{r loading data}
+set.seed(13)
+data <- read.csv("sledzie.csv", na.strings="?")
+data <- na.omit(data)
+data <- filter(data, cfin1 < 37 & lcop1 < 115)
+```
+
+## Dane
+
+### Wstêpna analiza
+Wszystkie poni¿sze wielkoœci dotycz¹ zbioru po wstêpnym przetworzeniu, tj. po usuniêciu rekordów z brakuj¹cymi wartoœciami oraz usuniêciu outlierów.
+
+### Rozmiar zbioru
+Liczba rekordów, liczba atrybutów
+`r dim(data)`
+
+### Podstawowe statystyki
+`r knitr::kable(summary(data))`
+
+## Analiza atrybutów
+Zdecydowano siê równie¿ na usuniêcie rekordów w których wartoœæ atrybutu *cfin1* przekracza³a *37*. Z analizy rozk³adu tego atrybutu wynika³o, ¿e 6 kolejnych rekordów posiada wartoœæ *37.66667*, która w znacz¹cy sposób odbiega³a od normy.
+
+```{r attributes analysis}
+binwidths = c(1000, 1, 0.2, 0.2, 4, 5, 10, 5, 0.05, 100000, 0.01, 50000, 0.1, 0.01, 1, 1)
+for (i in 1:16) {
+  print(
+    ggplot(data, aes(x = data[i])) + 
+    geom_histogram() + 
+    labs(x = colnames(data)[i]) + 
+    theme_light()
+  )
+}
+```
+
+## Korelacje
+```{r correlation analysis}
+matrix = cor(data[2:16])
+corrplot(matrix, method="color", type="lower", order="hclust")
+```
+
+## Œledzie w czasie
+```{r herrings in time plot}
+ggplotly(
+  ggplot(data, aes(x = data[1]/876 + 1955, y = length)) + 
+  geom_smooth() + 
+  scale_x_continuous(breaks = seq(1955, 2015, by=10)) +
+  ggtitle("D³ugoœæ œledzi w czasie") + 
+  labs(y="d³ugoœæ [cm]", x="rok") + 
+  theme_light()
+)
+```
+
+## Regresor œledzia
+```{r regression}
+inTrainSet = createDataPartition(y = data$sst, p = .75, list = FALSE)
+trainSet = data[inTrainSet,]
+testSet = data[-inTrainSet,]
+model = train(length ~ ., 
+              trainSet, 
+              method="lm")
+prediction = predict(model, testSet)
+```
+
+## Analiza wa¿noœci atrybutu
