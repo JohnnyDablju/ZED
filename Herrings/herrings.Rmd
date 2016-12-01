@@ -1,7 +1,7 @@
 ---
 title: "Œledzie"
 author: "Jan Wielebiñski"
-date: "26 XI 2016"
+date: "`r format(Sys.time(), '%d %B %Y')`"
 output: 
   html_document:
     toc: true
@@ -12,7 +12,9 @@ knitr::opts_chunk$set(echo = FALSE, results='hide', error = FALSE, warning = FAL
 ```
 
 ## Podsumowanie
-Usuniêto rekordy z brakami poniewa¿ próbka jest wystarczaj¹co du¿a. Dodatkowo zweryfikowano czy ma to wp³yw.
+W wyniku przeprowadzonej analizy uda³o siê rozwi¹zaæ zagadkê malej¹cej d³ugoœci œledzi. Kluczowymi czynnikami okaza³y siê byæ temperatura wody, oscylacja pó³nocnoatylantycka oraz dostêpnoœæ planktonu.
+
+Z punktu widzenia analizy wa¿ne by³o zapoznanie siê z rozk³adem wartoœci atrybutów - pozwoli³o to zrozumieæ specyfikê badanego zbioru, a tak¿e wstêpnie zauwa¿yæ pewne relacje oraz przewidzieæ problemy które mog¹ siê pojawiæ podczas przetwarzania danych. Bardzo wa¿ne okaza³o siê równie¿ zbadanie korelacji pomiêdzy wszystkimi atrybutami - umo¿liwi³o to wskazanie tych, które powinny mieæ najwiêkszy wp³yw na badan¹ wielkoœæ *length*.
 
 ## Wykorzystane biblioteki
 ```{r loading libraries, echo = TRUE}
@@ -22,6 +24,7 @@ library(plotly)
 library(corrplot)
 library(caret)
 library(dprep)
+library(randomForest)
 ```
 
 ```{r loading and preprocessing data, cache=TRUE}
@@ -48,21 +51,29 @@ data <- filter(data, cfin1 < 37 & lcop1 < 115)
 ## Dane
 
 ### Wstêpna analiza
-Wszystkie poni¿sze wielkoœci dotycz¹ zbioru po wstêpnym przetworzeniu, tj. po ... z brakuj¹cymi wartoœciami oraz usuniêciu outlierów.
+Wszystkie wielkoœci oraz wykresy znajduj¹ce siê w tej sekcji dotycz¹ zbioru po wstêpnym przetworzeniu, tj. po uzupe³nieniu brakuj¹cych wartoœci oraz usuniêciu wartoœci odstaj¹cych.
+
+Brakuj¹ce wartoœci uzupe³niano na podstawie jednego rekordu s¹siaduj¹cego. Zastosowano takie podejœcie ze wzglêdu na specyfikê zbioru danych. Rekordy s¹ uporz¹dkowane chronologicznie, ponadto kolejne (s¹siaduj¹ce) obserwacje by³y dokonywane w tym samym miejscu i czasie, a wiêc w tych samych warunkach. St¹d istnieje bardzo du¿e prawdopodobieñstwo, ¿e obserwacja s¹siaduj¹ca z badanym rekordem, dla wiêkszoœci atrybutów bêdzie posiada³a te same wartoœci.
+
+Analiza dotycz¹ca wartoœci odstaj¹cych znajduje siê w sekcji *Analiza atrybutów*.
 
 ### Rozmiar zbioru
-Liczba rekordów, liczba atrybutów
+Liczba rekordów: **`r dim(data)[1]`**
 
-`r dim(data)`
+Liczba atrybutów: **`r dim(data)[2]`**
+
 
 ### Podstawowe statystyki
 `r knitr::kable(summary(data))`
 
+
 ### Analiza atrybutów
-Zdecydowano siê równie¿ na usuniêcie rekordów w których wartoœæ atrybutu *cfin1* przekracza³a *37*, a dla *lcop1* wartoœæ *115*. Z analizy rozk³adu tego atrybutu wynika³o, ¿e 6 kolejnych rekordów dla obu tych atrybutów posiada wartoœci, które znacznie odbiegaj¹ od rozk³adu zmiennej. Ze wzglêdu na niewielk¹ liczbê takich rekordów oraz wysokie prawdopodobieñstwo, ¿e wartoœci tych atrybutów s¹ b³êdne, zdecydowano o ich odrzuceniu z badanego zbioru.
+Na podstawie rozk³adu atrybutów zdecydowano siê na usuniêcie rekordów dla których wartoœæ atrybutu *cfin1* przekracza *37.00*, a dla *lcop1* wartoœæ *115.00*. Z analizy pliku Ÿród³owego wynika, ¿e 6 kolejnych rekordów w przypadku obu tych atrybutów posiada wartoœci, które znacznie odbiegaj¹ od rozk³adu zmiennej. Ze wzglêdu na niewielk¹ liczbê takich rekordów oraz wysokie prawdopodobieñstwo, ¿e wartoœci tych atrybutów s¹ b³êdne, zdecydowano o ich odrzuceniu z badanego zbioru.
+
+W przypadku pozosta³ych atrybutów nie zaobserwowano tak znacznych anomalii. Rozwa¿ano mo¿liwoœæ odrzucenia pewnych rekordów ze wzglêdu na obecnoœæ odbiegaj¹cych wartoœci dla atrybutów *cfin2*, *chel1*, *chel2* czy *lcop1*. Jednak liczba takich rekordów by³a ju¿ znaczna, co pozwala podejrzewaæ ¿e anomalia jest rzeczywistym zjawiskiem, a nie wynika z b³êdu ludzkiego.
 
 ```{r attributes analysis, cache = TRUE}
-binwidths = c(1000, 1, 0.2, 0.2, 4, 5, 10, 5, 0.05, 100000, 0.01, 50000, 0.1, 0.01, 1, 1)
+#binwidths = c(1000, 1, 0.2, 0.2, 4, 5, 10, 5, 0.05, 100000, 0.01, 50000, 0.1, 0.01, 1, 1)
 for (i in 2:16) {
   print(
     ggplot(data, aes(x = data[i])) + 
@@ -74,51 +85,107 @@ for (i in 2:16) {
 ```
 
 ### Korelacje
+Na podstawie wykresu prezentuj¹cego korelacje miêdzy wszystkimi atrybutami, mo¿na zauwa¿yæ ¿e atrybut *length* jest najsilniej ujemnie skorelowany z atrybutami *sst* oraz *nao*, a tak¿e najsilniej dodatnio skorelowany z atrybutami *fbar*, *chel1* oraz *lcop1*. Na tym etapie warto równie¿ zauwa¿yæ, ¿e atrybuty *chel1* oraz *lcop1* s¹ ze sob¹ bardzo silnie skorelowane.
+
 ```{r correlation analysis}
-matrix = cor(data[2:16])
-corrplot(matrix, method="color", type="lower", order="hclust")
+corMatrix = cor(data[2:16])
+corrplot(corMatrix, method="color", type="lower", order="hclust")
 ```
+
 
 ## Wykres zmiany d³ugoœci œledzia w czasie
 
 ```{r herrings in time plot, results = 'markup'}
-plotData = select(data, X, length)
+plotData = select(data, X, length, sst, nao, lcop1)
 plotData = mutate(plotData, year = X/876 + 1955)
 ggplotly(
   ggplot(plotData, aes(x = year, y = length)) + 
   geom_smooth() + 
   scale_x_continuous(breaks = seq(1955, 2015, by = 10)) +
-  #ggtitle("D³ugoœæ œledzi w czasie") + 
-  labs(y="d³ugoœæ [cm]", x="rok") + 
+  labs(x="rok", y="d³ugoœæ [cm]") + 
   theme_light()
 )
 ```
 
 ## Regresor
 
-### Transformacja danych
-Wszystkie atrybuty z wyj¹tkiem *length* poddano normalizacji metod¹ *Min-Max* do przedzia³u [0, 1], poniewa¿
-
-### Wyniki regresji
-
-```{r regression calculation}
+```{r regression data preparation}
 normalizedData = mmnorm(select(data, 3:16,2), minval = 0, maxval = 1)
 inTrainSet = createDataPartition(y = normalizedData$length, p = .75, list = FALSE)
 trainSet = normalizedData[inTrainSet,]
 testSet = normalizedData[-inTrainSet,]
-trainCtrl = trainControl(method = "cv", number = 3)
-model = train(length ~ ., 
-              data = trainSet, 
-              method = "lm",
-              trControl = trainCtrl)
-prediction <- predict(model, newdata = testSet)
 ```
 
-```{r regression display, results = 'markup'}
-print (model)
-tsl <- testSet$length
-print (sqrt(mean((tsl - prediction)^2)))
-print (1 - sum((tsl - prediction)^2)/sum((tsl - mean(tsl))^2))
+```{r regression model, cache = TRUE}
+model = train(length ~ sst + fbar + lcop1 + nao, 
+              data = trainSet, 
+              method = "rf",
+              metric = "RMSE",
+              trControl = trainControl(method = "cv", number = 3))
 ```
+
+```{r regression prediction}
+prediction = predict(model, newdata = testSet)
+tsl <- testSet$length
+rmse = sqrt(mean((tsl - prediction)^2))
+rSquared = 1 - sum((tsl - prediction)^2)/sum((tsl - mean(tsl))^2)
+```
+
+### Normalizacja danych
+Wszystkie atrybuty z wyj¹tkiem *length* poddano normalizacji metod¹ *Min-Max* do przedzia³u [0, 1], poniewa¿ podczas testów niektóre z metod wymaga³y takiego przygotowania danych.
+
+### Przygotowanie
+Znormalizowane dane podzielono na zbiór ucz¹cy i testowy w proporcji *75%-25%*. Jako atrybut podlegaj¹cy stratyfikacji wybrano *length*.
+W trakcie uczenia zastosowano krzy¿ow¹ walidacjê z podzia³em na *3* podzbiory.
+
+### Przetestowane metody
+Podczas tworzenia raportu przetestowano 3 metody regresji:
+
++ Linear regression,
+
++ Support Vector Machines with Linear Kernel,
+
++ Random forest.
+
+*Linear regression* nawet przy wykorzystaniu wszystkich atrybutów gwarantowa³ *RMSE = 1.36* oraz *RSquared = 0.32*.
+*SVM* osi¹gn¹³ nieco gorszy wynik: *RMSE = 1.43* oraz *RSquared = 0.24*.
+Powy¿sze metody nie zapewnia³y satysfakcjonuj¹cych rezultatów. Zdecydowanie najlepiej sprawdzi³ siê *Random forest* opisany w kolejnym punkcie.
+
+Dla metod *SVM* oraz *Random forest* nale¿a³o dokonaæ selekcji atrybutów, które tworz¹ model, ze wzglêdu na d³ugi czas jego budowy. Wyboru dokonano na podstawie obserwacji korelacji miêdzy atrybutami w badanym zbiorze. Wybrano atrybuty *sst*, *nao*, *fbar* oraz *lcop1*. Nie wybrano doœæ silnie skorelowanego atrybutu *chel1*, poniewa¿ jest on bardzo silnie skorelowany z *lcop1* (*`r corMatrix[5,7]`*), wiêc nie ma potrzeby by równie¿ by³ obecny w modelu.
+
+### Wyniki
+```{r displaying model, results='markup'}
+print(model)
+```
+
+Podczas predykcji wartoœci w zbiorze testowym uzyskano *RMSE* na poziomie: **`r rmse`**.
+
+Natomiast wskaŸnik *RSquared* wyniós³: **`r rSquared`**.
 
 ### Analiza wa¿noœci atrybutów
+Najlepszy znaleziony model tworz¹ atrybuty *sst*, *nao* oraz *lcop1*. Mo¿na wiêc wysnuæ wniosek, ¿e rozmiar œledzi zacz¹³ maleæ ze wzglêdu na rosn¹c¹ temperaturê przy powierzchni wody, wzrastaj¹c¹ oscylacjê pó³nocnoatlantyck¹ oraz spadaj¹c¹ dostêpnoœæ planktonu. Na poni¿szych wykresach widaæ zbie¿noœæ zmiany tych czynników ze zmian¹ d³ugoœci œledzia. 
+
+Szczególnie warto zwróciæ uwagê na fakt, ¿e w czasie gdy odnotowano najwiêksz¹ d³ugoœæ œledzia (miêdzy 1965, a 1980 rokiem), wszystkie atrybuty okreœlone jako wa¿ne równie¿ osi¹ga³y swoje ekstrema. Potwierdza to s³usznoœæ ich wyboru.
+
+```{r summary plots, cache = TRUE}  
+ggplot(plotData, aes(x = year, y = sst)) + 
+geom_smooth() + 
+scale_x_continuous(breaks = seq(1955, 2015, by = 10)) +
+ggtitle("Temperatura wody w czasie") +
+labs(x = "rok", y = "temperatura [°C]") + 
+theme_light()
+
+ggplot(plotData, aes(x = year, y = nao)) + 
+geom_smooth() + 
+scale_x_continuous(breaks = seq(1955, 2015, by = 10)) +
+ggtitle("Oscylacja pó³nocnoatlantycka w czasie") +
+labs(x = "rok", y = "oscylacja [mb]") + 
+theme_light()
+
+ggplot(plotData, aes(x = year, y = lcop1)) + 
+geom_smooth() + 
+scale_x_continuous(breaks = seq(1955, 2015, by = 10)) +
+ggtitle("Dostêpnoœæ planktonu w czasie") +
+labs(x = "rok") + 
+theme_light()
+```
